@@ -1,0 +1,28 @@
+<form class="search-form form-grid">
+  <select name="provider_select">
+    <option value="SAS">SAS</option>
+    <option value="SkyTeam">SkyTeam</option>
+  </select>
+  <input type="hidden" name="provider" value="SAS">
+  <div class="combo">
+    <input name="origin" placeholder="Fra, f.eks. OSL eller Oslo" required>
+    <div class="airport-suggestions"></div>
+  </div>
+  <div class="combo">
+    <input name="destination" placeholder="Til, f.eks. JFK eller New York" required>
+    <div class="airport-suggestions"></div>
+  </div>
+  <input type="date" name="start_date">
+  <input type="date" name="end_date">
+  <select name="cabin">
+    <option>Any</option>
+    <option>Economy</option>
+    <option>Premium</option>
+    <option>Business</option>
+    <option>First</option>
+  </select>
+  <input type="number" name="passengers" min="1" max="9" value="1">
+  <label class="toggle"><input type="checkbox" name="direct_only"> Kun direkte</label>
+  <button type="submit">Søk bonusreiser</button>
+  <a class="ghost-btn export-link" href="/export.csv">Eksporter CSV</a>
+</form>

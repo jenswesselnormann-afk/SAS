@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="no">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>EuroBonus Award Explorer V3.1</title>
+  <meta name="theme-color" content="#0c1118">
+  <meta name="description" content="SAS og SkyTeam award-søk med kalender, value-feed og varsler.">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-192.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Mac + iPhone friendly · shareable webapp</p>
+        <h1>EuroBonus Award Explorer V3.1</h1>
+        <p class="muted max">Delbar webapp for SAS- og SkyTeam-awards med kalenderoversikt, value-feed og Telegram-varsler.</p>
+      </div>
+      <div class="hero-actions">
+        <span class="pill">365 dager</span>
+        <span class="pill">PWA</span>
+        <span class="pill">Telegram</span>
+      </div>
+    </header>
+
+    <div class="card banner">
+      <div>
+        <strong>Tips:</strong> Når denne er hostet kan Sarah åpne samme lenke på iPhone og velge <em>Legg til på Hjem-skjerm</em> for app-følelse.
+      </div>
+      <div id="telegram-status" class="muted"></div>
+    </div>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="home">Hjem</button>
+      <button class="tab" data-tab="sas">SAS</button>
+      <button class="tab" data-tab="skyteam">SkyTeam</button>
+      <button class="tab" data-tab="alerts">Varsler</button>
+      <button class="tab" data-tab="value">Value</button>
+      <button class="tab" data-tab="help">Bookinghjelp</button>
+    </nav>
+
+    <section class="panel active" id="home">
+      <div class="card stack">
+        <div class="row between wrap gap">
+          <div>
+            <h2>Start søket</h2>
+            <p class="muted">Velg SAS eller SkyTeam direkte fra forsiden og få kalenderen under med én gang.</p>
+          </div>
+        </div>
+        {% include 'partials/search_form.html' %}
+      </div>
+      <div id="home-calendar"></div>
+      <div id="home-results"></div>
+    </section>
+
+    <section class="panel" id="sas">
+      <div class="card stack">
+        <div class="row between wrap gap"><div><h2>SAS awards</h2><p class="muted">SAS-opererte bonusreiser via Award Finder.</p></div></div>
+        {% include 'partials/search_form.html' %}
+      </div>
+      <div id="sas-calendar"></div>
+      <div id="sas-results"></div>
+    </section>
+
+    <section class="panel" id="skyteam">
+      <div class="card stack">
+        <div class="row between wrap gap"><div><h2>SkyTeam awards</h2><p class="muted">Air France, KLM, Delta, Korean Air, Virgin Atlantic m.fl.</p></div></div>
+        {% include 'partials/search_form.html' %}
+      </div>
+      <div class="card notice">
+        <strong>Viktig:</strong>
+        <span class="muted">Her prøver appen å vise bonusseter du kan gå videre med hos SAS. Dyplenke til akkurat riktig partnerbooking kan variere, så bruk også Info-lenkene.</span>
+      </div>
+      <div id="skyteam-calendar"></div>
+      <div id="skyteam-results"></div>
+    </section>
+
+    <section class="panel" id="alerts">
+      <div class="card stack">
+        <div class="row between wrap gap">
+          <div>
+            <h2>Varsler</h2>
+            <p class="muted">Lagre ruter. Når appen er hostet kan worker kjøre på server og sende Telegram automatisk.</p>
+          </div>
+          <button id="telegram-test">Send Telegram-test</button>
+        </div>
+        <form id="subscription-form" class="form-grid compact">
+          <select name="provider"><option>SAS</option><option>SkyTeam</option></select>
+          <div class="combo"><input name="origin" placeholder="Fra, f.eks. OSL" required><div class="airport-suggestions"></div></div>
+          <div class="combo"><input name="destination" placeholder="Til, f.eks. JFK" required><div class="airport-suggestions"></div></div>
+          <input type="date" name="start_date">
+          <input type="date" name="end_date">
+          <select name="cabin"><option>Any</option><option>Economy</option><option>Premium</option><option>Business</option><option>First</option></select>
+          <input type="number" name="passengers" min="1" max="9" value="1">
+          <input type="number" name="min_seats" min="1" max="9" value="1">
+          <label class="toggle"><input type="checkbox" name="direct_only"> Kun direkte</label>
+          <button type="submit">Lagre abonnement</button>
+        </form>
+      </div>
+      <div class="split">
+        <div class="card"><h3>Abonnement</h3><div id="subscriptions"></div></div>
+        <div class="card"><h3>Nye funn</h3><div id="discoveries"></div></div>
+      </div>
+    </section>
+
+    <section class="panel" id="value">
+      <div class="card stack">
+        <div class="row between wrap gap">
+          <div><h2>Value-feed</h2><p class="muted">Rangert på langrute, cabin, direktefly og poengpris.</p></div>
+          <button id="refresh-value">Oppdater value</button>
+        </div>
+        <div id="value-results"></div>
+      </div>
+    </section>
+
+    <section class="panel" id="help">
+      <div class="card stack">
+        <h2>Hvordan bestille partnerreiser som SAS EuroBonus-medlem</h2>
+        <p class="muted">Bruk SAS sine egne sider som startpunkt. SkyTeam-partnerreiser kan bookes med EuroBonus-poeng, skatter og avgifter betales separat, og én vei prises til 60 % av tur/retur-prisen. SAS opplyser også at Amex 2-for-1 kan brukes på SkyTeam-partnere, med enkelte begrensninger.</p>
+        <div class="row wrap gap">
+          <a class="ghost-btn" target="_blank" rel="noreferrer" href="https://www.flysas.com/en/award-finder">SAS Award Finder</a>
+          <a class="ghost-btn" target="_blank" rel="noreferrer" href="https://www.flysas.com/ca-en/eurobonus/points/use/partner-award-flights/">Partner award flights</a>
+          <a class="ghost-btn" target="_blank" rel="noreferrer" href="https://www.flysas.com/en/about-us/skyteam">SAS + SkyTeam</a>
+        </div>
+        <div class="listish">
+          <div>1. Finn aktuell rute i appen.</div>
+          <div>2. Trykk <strong>Book</strong> eller <strong>Finn</strong>.</div>
+          <div>3. Hvis partnerlenken ikke lander perfekt, start fra SAS sin partner-award-side og søk videre derfra.</div>
+          <div>4. Dobbeltsjekk skatter/avgifter og cabin før du booker.</div>
+        </div>
+      </div>
+      <div class="card muted small">
+        Denne appen er laget som en delbar webapp først. Neste steg er ekte live-kilder og evt. desktop-pakking.
+      </div>
+    </section>
+  </div>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
