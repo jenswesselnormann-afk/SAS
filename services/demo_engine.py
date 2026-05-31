@@ -39,96 +39,121 @@ def daterange(start: date, end: date):
         cur += timedelta(days=1)
 
 
-def find_results(provider: str, origin: str, destination: str, start_date: str, end_date: str, cabin: str, passengers: int, direct_only: bool, include_nearby: bool=False) -> List[Dict[str, Any]]:
+def _providers_for(provider: str):
+    if provider == 'Both':
+        return ['SAS', 'SkyTeam']
+    if provider in ('SAS', 'SkyTeam'):
+        return [provider]
+    return ['SAS']
+
+
+def find_results(provider: str, origin: str, destination: str, start_date: str, end_date: str, cabin: str, passengers: int, direct_only: bool, include_nearby: bool=False, mode: str='route_search') -> List[Dict[str, Any]]:
     cabin = cabin or 'Any'
+    mode = mode if mode in {'route_search', 'any_routes', 'best_value', 'most_hits'} else 'route_search'
     start = date.fromisoformat(start_date) if start_date else date.today()
     end = date.fromisoformat(end_date) if end_date else min(date.today() + timedelta(days=60), start + timedelta(days=30))
     if end > date.today() + timedelta(days=365):
         end = date.today() + timedelta(days=365)
 
-    routes = SAS_ROUTES if provider == 'SAS' else SKYTEAM_ROUTES
     requested_origin = (origin or '').upper().strip()
     allowed_origins = set(expand_origins(requested_origin, include_nearby)) if requested_origin else set()
     out = []
-    for d in daterange(start, end):
-        for route in routes:
-            if provider == 'SAS':
-                o, dest, direct, duration = route
-                carrier = 'SAS'
-                segments = [f'{o}-{dest}'] if direct else []
-            else:
-                o, dest, carrier, direct, duration, segments = route
-            if requested_origin and o not in allowed_origins:
-                continue
-            if destination and dest != destination.upper():
-                continue
-            if direct_only and not direct:
-                continue
+    providers = _providers_for(provider)
+    broad_destination = mode in {'any_routes', 'most_hits'}
+    for selected_provider in providers:
+        routes = SAS_ROUTES if selected_provider == 'SAS' else SKYTEAM_ROUTES
+        for d in daterange(start, end):
+            for route in routes:
+                if selected_provider == 'SAS':
+                    o, dest, direct, duration = route
+                    carrier = 'SAS'
+                    segments = [f'{o}-{dest}'] if direct else []
+                else:
+                    o, dest, carrier, direct, duration, segments = route
+                if requested_origin and o not in allowed_origins:
+                    continue
+                if not broad_destination and destination and dest != destination.upper():
+                    continue
+                if direct_only and not direct:
+                    continue
 
-            seed = _seed(f'{provider}|{o}|{dest}|{d.isoformat()}|{cabin}')
-            if seed % 7 not in (0, 1, 2):
-                continue
+                seed = _seed(f'{selected_provider}|{o}|{dest}|{d.isoformat()}|{cabin}|{mode}')
+                availability_mod = 4 if mode == 'most_hits' else 5 if mode in {'any_routes', 'best_value'} else 7
+                if seed % availability_mod not in (0, 1, 2):
+                    continue
 
-            selected_cabin = _pick_cabin(cabin, seed, provider)
-            seats = _seat_count(seed)
-            if seats < passengers:
-                continue
+                selected_cabin = _pick_cabin(cabin, seed, selected_provider)
+                seats = _seat_count(seed)
+                if seats < passengers:
+                    continue
 
-            points = _points(provider, selected_cabin, duration, seed)
-            taxes = CASH_TAX_BASE.get(selected_cabin, 350) + (0 if direct else 250) + (seed % 170)
-            row = {
-                'provider': provider,
-                'carrier': carrier,
-                'origin': o,
-                'destination': dest,
-                'origin_label': airport_label(o),
-                'destination_label': airport_label(dest),
-                'date': d.isoformat(),
-                'cabin': selected_cabin,
-                'seats': seats,
-                'points': points,
-                'taxes': taxes,
-                'direct': direct,
-                'duration_minutes': duration,
-                'segments': segments,
-                'score': round(_value_score(selected_cabin, duration, points, seats, direct), 2),
-                'calendar_price': points,
-                'find_url': _find_url(provider, o, dest, d),
-                'book_url': _book_url(provider, o, dest, d),
-                'info_url': _info_url(provider, carrier),
-                'booking_note': _booking_note(provider),
-                'requested_origin': requested_origin or o,
-                'reposition_required': bool(requested_origin and o != requested_origin),
-                'reposition_note': _reposition_note(requested_origin, o),
-            }
-            out.append(row)
+                points = _points(selected_provider, selected_cabin, duration, seed)
+                taxes = CASH_TAX_BASE.get(selected_cabin, 350) + (0 if direct else 250) + (seed % 170)
+                row = {
+                    'provider': selected_provider,
+                    'carrier': carrier,
+                    'origin': o,
+                    'destination': dest,
+                    'origin_label': airport_label(o),
+                    'destination_label': airport_label(dest),
+                    'date': d.isoformat(),
+                    'cabin': selected_cabin,
+                    'seats': seats,
+                    'points': points,
+                    'taxes': taxes,
+                    'direct': direct,
+                    'duration_minutes': duration,
+                    'segments': segments,
+                    'score': round(_value_score(selected_cabin, duration, points, seats, direct), 2),
+                    'calendar_price': points,
+                    'find_url': _find_url(selected_provider, o, dest, d),
+                    'book_url': _book_url(selected_provider, o, dest, d),
+                    'info_url': _info_url(selected_provider, carrier),
+                    'booking_note': _booking_note(selected_provider),
+                    'requested_origin': requested_origin or o,
+                    'reposition_required': bool(requested_origin and o != requested_origin),
+                    'reposition_note': _reposition_note(requested_origin, o),
+                }
+                out.append(row)
     uniq = {}
     for r in sorted(out, key=lambda r: (r['date'], r['points'], -r['score'])):
         key = (r['provider'], r['date'], r['origin'], r['destination'], r['cabin'], tuple(r.get('segments', [])))
         if key not in uniq:
             uniq[key] = r
-    return list(uniq.values())
+    rows = list(uniq.values())
+    if mode == 'best_value':
+        rows.sort(key=lambda r: (-r['score'], r['points'], r['taxes'], -r['seats']))
+    elif mode == 'most_hits':
+        rows.sort(key=lambda r: (r['date'], -r['seats'], r['points'], -r['score']))
+    else:
+        rows.sort(key=lambda r: (r['date'], r['points'], -r['seats']))
+    return rows[:600]
 
 
 def build_calendar(results: List[Dict[str, Any]]):
-    best_by_date = {}
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
     for r in results:
-        cur = best_by_date.get(r['date'])
-        if not cur or r['points'] < cur['points']:
-            best_by_date[r['date']] = {
-                'date': r['date'],
-                'points': r['points'],
-                'cabin': r['cabin'],
-                'seats': r['seats'],
-                'direct': r['direct'],
-                'book_url': r['book_url'],
-                'origin': r['origin'],
-                'destination': r['destination'],
-                'origin_label': r['origin_label'],
-                'destination_label': r['destination_label'],
-                'requested_origin': r.get('requested_origin', r['origin']),
-            }
-    return [best_by_date[d] for d in sorted(best_by_date)]
+        grouped.setdefault(r['date'], []).append(r)
+    calendar = []
+    for day in sorted(grouped):
+        rows = grouped[day]
+        best = sorted(rows, key=lambda r: (r['points'], -r['seats'], -r['score']))[0]
+        calendar.append({
+            'date': best['date'],
+            'points': best['points'],
+            'cabin': best['cabin'],
+            'seats': sum(r.get('seats', 0) for r in rows),
+            'direct': best['direct'],
+            'book_url': best['book_url'],
+            'origin': best['origin'],
+            'destination': best['destination'],
+            'origin_label': best['origin_label'],
+            'destination_label': best['destination_label'],
+            'requested_origin': best.get('requested_origin', best['origin']),
+            'hit_count': len(rows),
+            'best_score': max(r.get('score', 0) for r in rows),
+        })
+    return calendar
 
 
 def build_value_feed(all_rows: List[Dict[str, Any]]):

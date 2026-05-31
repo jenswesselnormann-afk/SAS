@@ -38,6 +38,7 @@ Object.entries(searchSections).forEach(([key, cfg]) => {
   }
 
   setDefaultDates(form);
+  wireSearchMode(form);
   wireAirportAutocomplete(form);
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -48,7 +49,7 @@ Object.entries(searchSections).forEach(([key, cfg]) => {
       hint.textContent = data.expanded_origins?.length > 1 ? `Sjekker også gateway-byer: ${data.expanded_origins.join(', ')}` : '';
     }
     renderCalendar(document.getElementById(cfg.calendar), data.calendar, payload.provider || 'SAS', payload);
-    renderResults(document.getElementById(cfg.results), data.results);
+    renderResults(document.getElementById(cfg.results), data.results, payload.mode);
     bindExport(form, payload);
   });
   bindExport(form, formPayload(form));
@@ -73,13 +74,29 @@ function bindExport(form, payload) {
   link.href = `/export.csv?${qs.toString()}`;
 }
 
+function wireSearchMode(form) {
+  const mode = form.querySelector('select[name="mode"]');
+  const destination = form.querySelector('input[name="destination"]');
+  if (!mode || !destination) return;
+  const sync = () => {
+    const broad = mode.value === 'any_routes' || mode.value === 'most_hits';
+    destination.required = !broad;
+    destination.placeholder = broad ? 'Til, valgfritt for bredt søk' : 'Til, f.eks. JFK eller New York';
+  };
+  mode.addEventListener('change', sync);
+  sync();
+}
+
 function formPayload(form) {
   const fd = new FormData(form);
   const provider = fd.get('provider') || fd.get('provider_select') || 'SAS';
+  const mode = fd.get('mode') || 'route_search';
+  const destination = normalizeAirportValue(fd.get('destination'));
   return {
     provider,
+    mode,
     origin: normalizeAirportValue(fd.get('origin')),
-    destination: normalizeAirportValue(fd.get('destination')),
+    destination: (mode === 'any_routes' || mode === 'most_hits') ? '' : destination,
     start_date: fd.get('start_date') || '',
     end_date: fd.get('end_date') || '',
     cabin: fd.get('cabin') || 'Any',
@@ -106,13 +123,19 @@ async function postJson(url, payload) {
 
 function renderCalendar(target, rows, provider, payload) {
   if (!rows.length) {
-    target.innerHTML = `<div class="card empty">Ingen kalenderfunn i dette intervallet.</div>`;
+    target.innerHTML = `<div class="card empty">Ingen kalenderfunn i dette intervallet. Prøv flere datoer, Any routes eller gateway-byer.</div>`;
     return;
   }
   const months = buildMonthBuckets(rows, payload.start_date, payload.end_date);
+  const modeName = {
+    route_search: 'Kalendersøk',
+    any_routes: 'Any routes',
+    best_value: 'Best value',
+    most_hits: 'Flest hits'
+  }[payload.mode] || 'Kalendersøk';
   target.innerHTML = `
     <div class="card calendar-wrap big-calendar">
-      <div class="header"><div><h3>Lavpriskalender</h3><div class="meta-line">Billigste award per dato · setetall vises i cellen</div></div><span class="tag">${escapeHtml(provider)}</span></div>
+      <div class="header"><div><h3>${modeName}</h3><div class="meta-line">Billigste award per dato · setetall vises i cellen</div></div><span class="tag">${escapeHtml(provider)}</span></div>
       <div class="months-grid">${months.map(renderMonth).join('')}</div>
     </div>`;
 }
@@ -161,16 +184,21 @@ function renderDay(day) {
       <div class="date-num">${label}</div>
       <div class="points">${shortFmt(day.points)}</div>
       <div class="micro">${day.seats} seter</div>
-      <div class="micro">${escapeHtml(day.origin || '')}</div>
+      <div class="micro">${escapeHtml(day.origin || '')} → ${escapeHtml(day.destination || '')}</div>
     </a>`;
 }
 
-function renderResults(target, rows) {
+function renderResults(target, rows, mode = 'route_search') {
   if (!rows.length) {
-    target.innerHTML = `<div class="card empty">Ingen treff akkurat nå. Prøv flere datoer, annen cabin eller annen rute.</div>`;
+    target.innerHTML = `<div class="card empty">Ingen treff akkurat nå. Prøv flere datoer, annen cabin, Any routes eller gateway-byer.</div>`;
     return;
   }
-  target.innerHTML = `<div class="results-grid">${rows.map(cardHtml).join('')}</div>`;
+  const intro = {
+    any_routes: 'Viser relevante ruter fra valgt avreiseflyplass og gateway-byer.',
+    best_value: 'Rangert på poengmessig verdi, cabin, flytid og setetall.',
+    most_hits: 'Sortert for å vise mest tilgjengelighet først.'
+  }[mode] || 'Rangert etter dato og poeng.';
+  target.innerHTML = `<div class="card" style="margin-bottom:12px"><div class="meta-line">${intro}</div></div><div class="results-grid">${rows.map(cardHtml).join('')}</div>`;
 }
 
 function cardHtml(r) {

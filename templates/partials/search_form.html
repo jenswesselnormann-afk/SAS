@@ -2,14 +2,21 @@
   <select name="provider_select">
     <option value="SAS">SAS</option>
     <option value="SkyTeam">SkyTeam</option>
+    <option value="Both">SAS + SkyTeam</option>
   </select>
   <input type="hidden" name="provider" value="SAS">
+  <select name="mode">
+    <option value="route_search">Kalendersøk</option>
+    <option value="any_routes">Any routes</option>
+    <option value="best_value">Best value</option>
+    <option value="most_hits">Flest hits</option>
+  </select>
   <div class="combo">
     <input name="origin" placeholder="Fra, f.eks. OSL eller Oslo" required>
     <div class="airport-suggestions"></div>
   </div>
   <div class="combo">
-    <input name="destination" placeholder="Til, f.eks. JFK eller New York" required>
+    <input name="destination" placeholder="Til, f.eks. JFK eller New York">
     <div class="airport-suggestions"></div>
   </div>
   <input type="date" name="start_date">
