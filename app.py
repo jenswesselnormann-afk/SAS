@@ -7,6 +7,7 @@ from services.storage import init_db, add_subscription, list_subscriptions, dele
 from services.airports import search_airports
 from services.demo_engine import find_results, build_calendar, build_value_feed
 from services.telegram import is_configured, send_message
+from services.gateways import expand_origins
 
 app = Flask(__name__)
 init_db()
@@ -37,10 +38,18 @@ def api_airports():
     return jsonify({'results': search_airports(request.args.get('q', ''))})
 
 
+@app.route('/api/gateways')
+def api_gateways():
+    origin = request.args.get('origin', '').upper()
+    include = request.args.get('include_nearby', 'true').lower() == 'true'
+    return jsonify({'origin': origin, 'results': expand_origins(origin, include)})
+
+
 @app.route('/api/search', methods=['POST'])
 def api_search():
     payload = request.get_json(force=True)
     provider = payload.get('provider', 'SAS')
+    include_nearby = bool(payload.get('include_nearby', False))
     results = find_results(
         provider,
         payload.get('origin', ''),
@@ -50,14 +59,21 @@ def api_search():
         payload.get('cabin', 'Any'),
         int(payload.get('passengers', 1)),
         bool(payload.get('direct_only', False)),
+        include_nearby,
     )
-    return jsonify({'results': results, 'calendar': build_calendar(results), 'count': len(results), 'provider': provider})
+    return jsonify({
+        'results': results,
+        'calendar': build_calendar(results),
+        'count': len(results),
+        'provider': provider,
+        'expanded_origins': expand_origins(payload.get('origin', ''), include_nearby),
+    })
 
 
 @app.route('/api/value-feed')
 def api_value_feed():
-    sas = find_results('SAS', '', '', '', '', 'Any', 1, False)
-    sky = find_results('SkyTeam', '', '', '', '', 'Any', 1, False)
+    sas = find_results('SAS', '', '', '', '', 'Any', 1, False, False)
+    sky = find_results('SkyTeam', '', '', '', '', 'Any', 1, False, False)
     rows = build_value_feed(sas + sky)
     return jsonify({'results': rows, 'count': len(rows)})
 
@@ -89,13 +105,14 @@ def api_telegram_status():
 
 @app.route('/api/telegram/test', methods=['POST'])
 def api_telegram_test():
-    result = send_message('✅ Testvarsel fra EuroBonus Award Explorer V3.1')
+    result = send_message('✅ Testvarsel fra EuroBonus Award Explorer V3.3')
     status = 200 if result.get('ok') else 400
     return jsonify(result), status
 
 
 @app.route('/export.csv')
 def export_csv():
+    include_nearby = request.args.get('include_nearby', 'false').lower() == 'true'
     results = find_results(
         request.args.get('provider', 'SAS'),
         request.args.get('origin', ''),
@@ -105,11 +122,12 @@ def export_csv():
         request.args.get('cabin', 'Any'),
         int(request.args.get('passengers', 1)),
         request.args.get('direct_only', 'false').lower() == 'true',
+        include_nearby,
     )
     out = io.StringIO()
     writer = csv.DictWriter(
         out,
-        fieldnames=['provider', 'carrier', 'origin_label', 'destination_label', 'date', 'cabin', 'seats', 'points', 'taxes', 'direct', 'segments', 'score', 'book_url']
+        fieldnames=['provider', 'carrier', 'origin_label', 'destination_label', 'date', 'cabin', 'seats', 'points', 'taxes', 'direct', 'segments', 'reposition_required', 'reposition_note', 'score', 'book_url']
     )
     writer.writeheader()
     for r in results:

@@ -1,4 +1,4 @@
-<form class="search-form form-grid">
+<form class="search-form form-grid wide-search">
   <select name="provider_select">
     <option value="SAS">SAS</option>
     <option value="SkyTeam">SkyTeam</option>
@@ -23,6 +23,7 @@
   </select>
   <input type="number" name="passengers" min="1" max="9" value="1">
   <label class="toggle"><input type="checkbox" name="direct_only"> Kun direkte</label>
+  <label class="toggle"><input type="checkbox" name="include_nearby" checked> Sjekk gateway-byer også</label>
   <button type="submit">Søk bonusreiser</button>
   <a class="ghost-btn export-link" href="/export.csv">Eksporter CSV</a>
 </form>

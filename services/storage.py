@@ -26,6 +26,7 @@ def init_db():
         passengers INTEGER DEFAULT 1,
         direct_only INTEGER DEFAULT 0,
         min_seats INTEGER DEFAULT 1,
+        include_nearby INTEGER DEFAULT 1,
         telegram_enabled INTEGER DEFAULT 1,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )''')
@@ -46,12 +47,13 @@ def add_subscription(payload):
     conn = connect()
     cur = conn.cursor()
     cur.execute(
-        '''INSERT INTO subscriptions (provider, origin, destination, start_date, end_date, cabin, passengers, direct_only, min_seats, telegram_enabled)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+        '''INSERT INTO subscriptions (provider, origin, destination, start_date, end_date, cabin, passengers, direct_only, min_seats, include_nearby, telegram_enabled)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
         (
             payload['provider'], payload['origin'].upper(), payload['destination'].upper(), payload.get('start_date'), payload.get('end_date'),
             payload.get('cabin', 'Any'), int(payload.get('passengers', 1)), 1 if payload.get('direct_only') else 0,
-            int(payload.get('min_seats', 1)), 1 if payload.get('telegram_enabled', True) else 0
+            int(payload.get('min_seats', 1)), 1 if payload.get('include_nearby', True) else 0,
+            1 if payload.get('telegram_enabled', True) else 0
         )
     )
     conn.commit()

@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from hashlib import sha256
 from typing import List, Dict, Any
 from services.airports import airport_label
+from services.gateways import expand_origins
 
 SAS_ROUTES = [
     ('OSL','EWR', True, 510), ('OSL','JFK', True, 500), ('CPH','JFK', True, 520), ('CPH','EWR', True, 510),
@@ -38,7 +39,7 @@ def daterange(start: date, end: date):
         cur += timedelta(days=1)
 
 
-def find_results(provider: str, origin: str, destination: str, start_date: str, end_date: str, cabin: str, passengers: int, direct_only: bool) -> List[Dict[str, Any]]:
+def find_results(provider: str, origin: str, destination: str, start_date: str, end_date: str, cabin: str, passengers: int, direct_only: bool, include_nearby: bool=False) -> List[Dict[str, Any]]:
     cabin = cabin or 'Any'
     start = date.fromisoformat(start_date) if start_date else date.today()
     end = date.fromisoformat(end_date) if end_date else min(date.today() + timedelta(days=60), start + timedelta(days=30))
@@ -46,6 +47,8 @@ def find_results(provider: str, origin: str, destination: str, start_date: str, 
         end = date.today() + timedelta(days=365)
 
     routes = SAS_ROUTES if provider == 'SAS' else SKYTEAM_ROUTES
+    requested_origin = (origin or '').upper().strip()
+    allowed_origins = set(expand_origins(requested_origin, include_nearby)) if requested_origin else set()
     out = []
     for d in daterange(start, end):
         for route in routes:
@@ -55,7 +58,7 @@ def find_results(provider: str, origin: str, destination: str, start_date: str, 
                 segments = [f'{o}-{dest}'] if direct else []
             else:
                 o, dest, carrier, direct, duration, segments = route
-            if origin and o != origin.upper():
+            if requested_origin and o not in allowed_origins:
                 continue
             if destination and dest != destination.upper():
                 continue
@@ -94,9 +97,17 @@ def find_results(provider: str, origin: str, destination: str, start_date: str, 
                 'book_url': _book_url(provider, o, dest, d),
                 'info_url': _info_url(provider, carrier),
                 'booking_note': _booking_note(provider),
+                'requested_origin': requested_origin or o,
+                'reposition_required': bool(requested_origin and o != requested_origin),
+                'reposition_note': _reposition_note(requested_origin, o),
             }
             out.append(row)
-    return sorted(out, key=lambda r: (r['date'], r['points'], -r['score']))
+    uniq = {}
+    for r in sorted(out, key=lambda r: (r['date'], r['points'], -r['score'])):
+        key = (r['provider'], r['date'], r['origin'], r['destination'], r['cabin'], tuple(r.get('segments', [])))
+        if key not in uniq:
+            uniq[key] = r
+    return list(uniq.values())
 
 
 def build_calendar(results: List[Dict[str, Any]]):
@@ -115,6 +126,7 @@ def build_calendar(results: List[Dict[str, Any]]):
                 'destination': r['destination'],
                 'origin_label': r['origin_label'],
                 'destination_label': r['destination_label'],
+                'requested_origin': r.get('requested_origin', r['origin']),
             }
     return [best_by_date[d] for d in sorted(best_by_date)]
 
@@ -184,6 +196,13 @@ def _info_url(provider: str, carrier: str):
     }
     return lookup.get(carrier, 'https://www.flysas.com/ca-en/eurobonus/points/use/partner-award-flights/')
 
+
+
+
+def _reposition_note(requested_origin: str, actual_origin: str):
+    if not requested_origin or requested_origin == actual_origin:
+        return ''
+    return f'Starter fra {actual_origin}. Vurder posisjoneringsfly fra {requested_origin}.'
 
 def _booking_note(provider: str):
     if provider == 'SAS':

@@ -43,7 +43,11 @@ Object.entries(searchSections).forEach(([key, cfg]) => {
     e.preventDefault();
     const payload = formPayload(form);
     const data = await postJson('/api/search', payload);
-    renderCalendar(document.getElementById(cfg.calendar), data.calendar, payload.provider || 'SAS');
+    if (key === 'home') {
+      const hint = document.getElementById('gateway-hint');
+      hint.textContent = data.expanded_origins?.length > 1 ? `Sjekker også gateway-byer: ${data.expanded_origins.join(', ')}` : '';
+    }
+    renderCalendar(document.getElementById(cfg.calendar), data.calendar, payload.provider || 'SAS', payload);
     renderResults(document.getElementById(cfg.results), data.results);
     bindExport(form, payload);
   });
@@ -56,7 +60,7 @@ function setDefaultDates(form) {
   if (!s.value) {
     const now = new Date();
     const end = new Date();
-    end.setDate(now.getDate() + 60);
+    end.setDate(now.getDate() + 90);
     s.value = now.toISOString().slice(0, 10);
     e.value = end.toISOString().slice(0, 10);
   }
@@ -80,7 +84,8 @@ function formPayload(form) {
     end_date: fd.get('end_date') || '',
     cabin: fd.get('cabin') || 'Any',
     passengers: Number(fd.get('passengers') || 1),
-    direct_only: fd.get('direct_only') === 'on'
+    direct_only: fd.get('direct_only') === 'on',
+    include_nearby: fd.get('include_nearby') === 'on'
   };
 }
 
@@ -99,23 +104,65 @@ async function postJson(url, payload) {
   return await res.json();
 }
 
-function renderCalendar(target, rows, provider) {
+function renderCalendar(target, rows, provider, payload) {
   if (!rows.length) {
     target.innerHTML = `<div class="card empty">Ingen kalenderfunn i dette intervallet.</div>`;
     return;
   }
+  const months = buildMonthBuckets(rows, payload.start_date, payload.end_date);
   target.innerHTML = `
-    <div class="card calendar-wrap">
-      <div class="header"><div><h3>Kalenderoversikt</h3><div class="meta-line">Laveste poengpris per dato</div></div><span class="tag">${escapeHtml(provider)}</span></div>
-      <div class="calendar-grid">${rows.map(r => `
-        <a class="calendar-cell ghost-btn" href="${r.book_url}" target="_blank" rel="noreferrer">
-          <div class="day">${r.date}</div>
-          <div class="price">${fmt(r.points)}</div>
-          <div class="meta-line">${escapeHtml(r.origin_label)} → ${escapeHtml(r.destination_label)}</div>
-          <div class="meta-line">${r.cabin} · ${r.seats} seter</div>
-          <div class="meta-line">${r.direct ? 'Direkte' : 'Ikke direkte'}</div>
-        </a>`).join('')}</div>
+    <div class="card calendar-wrap big-calendar">
+      <div class="header"><div><h3>Lavpriskalender</h3><div class="meta-line">Billigste award per dato · setetall vises i cellen</div></div><span class="tag">${escapeHtml(provider)}</span></div>
+      <div class="months-grid">${months.map(renderMonth).join('')}</div>
     </div>`;
+}
+
+function buildMonthBuckets(rows, startDate, endDate) {
+  const byDate = Object.fromEntries(rows.map(r => [r.date, r]));
+  const start = new Date(startDate || rows[0].date);
+  const end = new Date(endDate || rows[rows.length - 1].date);
+  const months = [];
+  const cur = new Date(start.getFullYear(), start.getMonth(), 1);
+  while (cur <= end) {
+    const year = cur.getFullYear();
+    const month = cur.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const days = [];
+    for (let i = 0; i < firstDay.getDay(); i++) days.push(null);
+    for (let day = 1; day <= lastDay.getDate(); day++) {
+      const date = new Date(year, month, day);
+      const iso = date.toISOString().slice(0, 10);
+      days.push(byDate[iso] || { date: iso, empty: true });
+    }
+    months.push({ label: firstDay.toLocaleDateString('nb-NO', { month: 'long', year: 'numeric' }), days });
+    cur.setMonth(cur.getMonth() + 1);
+  }
+  return months;
+}
+
+function renderMonth(month) {
+  return `
+    <section class="month-card">
+      <div class="month-title">${escapeHtml(month.label)}</div>
+      <div class="weekdays"><span>Søn</span><span>Man</span><span>Tir</span><span>Ons</span><span>Tor</span><span>Fre</span><span>Lør</span></div>
+      <div class="month-grid">${month.days.map(renderDay).join('')}</div>
+    </section>`;
+}
+
+function renderDay(day) {
+  if (!day) return `<div class="day-cell empty-slot"></div>`;
+  const d = new Date(day.date);
+  const label = d.getDate();
+  if (day.empty) return `<div class="day-cell no-award"><div class="date-num">${label}</div><div class="micro muted">–</div></div>`;
+  const reposition = day.origin && day.requested_origin && day.origin !== day.requested_origin;
+  return `
+    <a class="day-cell hit ${reposition ? 'reposition' : ''}" href="${day.book_url || '#'}" target="_blank" rel="noreferrer">
+      <div class="date-num">${label}</div>
+      <div class="points">${shortFmt(day.points)}</div>
+      <div class="micro">${day.seats} seter</div>
+      <div class="micro">${escapeHtml(day.origin || '')}</div>
+    </a>`;
 }
 
 function renderResults(target, rows) {
@@ -128,10 +175,10 @@ function renderResults(target, rows) {
 
 function cardHtml(r) {
   return `
-    <article class="result">
+    <article class="result ${r.reposition_required ? 'result-reposition' : ''}">
       <div class="row between wrap gap">
         <div>
-          <div class="tag">${r.provider}${r.carrier ? ` · ${escapeHtml(r.carrier)}` : ''}</div>
+          <div class="tag">${r.provider}${r.carrier ? ` · ${escapeHtml(r.carrier)}` : ''}${r.reposition_required ? ' · gateway' : ''}</div>
           <h3>${escapeHtml(r.origin_label)} → ${escapeHtml(r.destination_label)}</h3>
           <div class="meta-line">${r.date} · ${r.cabin} · ${r.direct ? 'Direkte' : 'Ikke direkte'}</div>
         </div>
@@ -144,6 +191,7 @@ function cardHtml(r) {
       </div>
       <div class="meta-line" style="margin-top:12px">Segmenter: ${escapeHtml((r.segments || []).join(' → ') || `${r.origin}-${r.destination}`)}</div>
       <div class="meta-line">Flytid: ${Math.floor((r.duration_minutes || 0) / 60)} t ${(r.duration_minutes || 0) % 60} m</div>
+      ${r.reposition_required ? `<div class="meta-line warn">${escapeHtml(r.reposition_note || '')}</div>` : ''}
       <div class="meta-line">${escapeHtml(r.booking_note || '')}</div>
       <div class="row wrap gap" style="margin-top:12px">
         <a class="ghost-btn" href="${r.book_url}" target="_blank" rel="noreferrer">Book</a>
@@ -155,6 +203,9 @@ function cardHtml(r) {
 
 function fmt(v) {
   return new Intl.NumberFormat('nb-NO').format(v || 0);
+}
+function shortFmt(v) {
+  return v >= 1000 ? `${Math.round(v / 1000)}k` : String(v || 0);
 }
 
 function escapeHtml(t) {
@@ -197,6 +248,7 @@ if (subForm) {
     payload.origin = normalizeAirportValue(payload.origin);
     payload.destination = normalizeAirportValue(payload.destination);
     payload.direct_only = fd.get('direct_only') === 'on';
+    payload.include_nearby = fd.get('include_nearby') === 'on';
     payload.telegram_enabled = true;
     payload.passengers = Number(payload.passengers || 1);
     payload.min_seats = Number(payload.min_seats || 1);
@@ -213,7 +265,7 @@ async function loadSubscriptions() {
   const data = await (await fetch('/api/subscriptions')).json();
   const t = document.getElementById('subscriptions');
   if (!data.results.length) {
-    t.innerHTML = `<div class="empty">Ingen abonnement ennå.</div>`;
+    t.innerHTML = `<div class="empty">Ingen watchers ennå.</div>`;
     return;
   }
   t.innerHTML = data.results.map(s => `
@@ -222,7 +274,8 @@ async function loadSubscriptions() {
         <div>
           <div class="tag">${s.provider}</div>
           <strong>${s.origin} → ${s.destination}</strong>
-          <div class="meta-line">${s.start_date || 'åpen start'} til ${s.end_date || 'åpen slutt'} · ${s.cabin} · ${s.passengers} pax</div>
+          <div class="meta-line">${s.start_date || 'åpen start'} til ${s.end_date || 'åpen slutt'} · ${s.cabin} · ${s.passengers} pax · min ${s.min_seats} seter</div>
+          <div class="meta-line">${s.include_nearby ? 'Gateway-byer er slått på' : 'Kun valgt avreiseflyplass'}</div>
         </div>
         <button onclick="deleteSub(${s.id})">Slett</button>
       </div>
