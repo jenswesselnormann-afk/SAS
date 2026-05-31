@@ -1,16 +1,22 @@
 <form class="search-form form-grid wide-search">
+  <label class="field-label">
+    <span>Kilde</span>
   <select name="provider_select">
     <option value="SAS">SAS</option>
     <option value="SkyTeam">SkyTeam</option>
     <option value="Both">SAS + SkyTeam</option>
   </select>
+  </label>
   <input type="hidden" name="provider" value="SAS">
+  <label class="field-label">
+    <span>Modus</span>
   <select name="mode">
     <option value="route_search">Kalendersøk</option>
     <option value="any_routes">Any routes</option>
     <option value="best_value">Best value</option>
     <option value="most_hits">Flest hits</option>
   </select>
+  </label>
   <div class="combo">
     <input name="origin" placeholder="Fra, f.eks. OSL eller Oslo" required>
     <div class="airport-suggestions"></div>
@@ -31,6 +37,7 @@
   <input type="number" name="passengers" min="1" max="9" value="1">
   <label class="toggle"><input type="checkbox" name="direct_only"> Kun direkte</label>
   <label class="toggle"><input type="checkbox" name="include_nearby" checked> Sjekk gateway-byer også</label>
-  <button type="submit">Søk bonusreiser</button>
+  <button type="submit">Finn tilgjengelige bonusseter</button>
   <a class="ghost-btn export-link" href="/export.csv">Eksporter CSV</a>
 </form>
+<p class="meta-line search-note">Lenker i treffkort åpner SAS sine offisielle sider med rutekontekst. Eksakt flight/itinerary må ofte velges i SAS-flowen.</p>

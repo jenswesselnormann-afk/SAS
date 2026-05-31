@@ -135,7 +135,7 @@ function renderCalendar(target, rows, provider, payload) {
   }[payload.mode] || 'Kalendersøk';
   target.innerHTML = `
     <div class="card calendar-wrap big-calendar">
-      <div class="header"><div><h3>${modeName}</h3><div class="meta-line">Billigste award per dato · setetall vises i cellen</div></div><span class="tag">${escapeHtml(provider)}</span></div>
+      <div class="header"><div><h3>${modeName}</h3><div class="meta-line">Billigste award per dato · setetall vises i cellen</div></div><span class="tag ${providerClass(provider)}">${escapeHtml(provider)}</span></div>
       <div class="months-grid">${months.map(renderMonth).join('')}</div>
     </div>`;
 }
@@ -198,19 +198,28 @@ function renderResults(target, rows, mode = 'route_search') {
     best_value: 'Rangert på poengmessig verdi, cabin, flytid og setetall.',
     most_hits: 'Sortert for å vise mest tilgjengelighet først.'
   }[mode] || 'Rangert etter dato og poeng.';
-  target.innerHTML = `<div class="card" style="margin-bottom:12px"><div class="meta-line">${intro}</div></div><div class="results-grid">${rows.map(cardHtml).join('')}</div>`;
+  target.innerHTML = `<div class="card" style="margin-bottom:12px"><div class="row between wrap gap"><div class="meta-line">${intro}</div><span class="tag">${rows.length} treff</span></div></div><div class="results-grid">${rows.map(r => cardHtml(r, mode)).join('')}</div>`;
 }
 
-function cardHtml(r) {
+function cardHtml(r, mode = 'route_search') {
+  const searchDetails = formatSearchDetails(r);
+  const providerCls = providerClass(r.provider);
+  const isValueMode = mode === 'best_value';
+  const modeBadge = isValueMode ? `<span class="tag value-badge">Best value</span>` : '';
+  const gatewayBadge = r.reposition_required ? `<span class="tag gateway-badge">Gateway</span>` : '';
   return `
     <article class="result ${r.reposition_required ? 'result-reposition' : ''}">
-      <div class="row between wrap gap">
+      <div class="row between wrap gap result-head">
         <div>
-          <div class="tag">${r.provider}${r.carrier ? ` · ${escapeHtml(r.carrier)}` : ''}${r.reposition_required ? ' · gateway' : ''}</div>
+          <div class="result-badges">
+            <span class="tag ${providerCls}">${r.provider}${r.carrier ? ` · ${escapeHtml(r.carrier)}` : ''}</span>
+            ${modeBadge}
+            ${gatewayBadge}
+          </div>
           <h3>${escapeHtml(r.origin_label)} → ${escapeHtml(r.destination_label)}</h3>
           <div class="meta-line">${r.date} · ${r.cabin} · ${r.direct ? 'Direkte' : 'Ikke direkte'}</div>
         </div>
-        <div class="good">Score ${Number(r.score || 0).toFixed(2)}</div>
+        <div class="good strong">Score ${Number(r.score || 0).toFixed(2)}</div>
       </div>
       <div class="results-grid mini-three">
         <div class="calendar-cell"><div class="day">Poeng</div><div class="price">${fmt(r.points)}</div></div>
@@ -221,12 +230,43 @@ function cardHtml(r) {
       <div class="meta-line">Flytid: ${Math.floor((r.duration_minutes || 0) / 60)} t ${(r.duration_minutes || 0) % 60} m</div>
       ${r.reposition_required ? `<div class="meta-line warn">${escapeHtml(r.reposition_note || '')}</div>` : ''}
       <div class="meta-line">${escapeHtml(r.booking_note || '')}</div>
+      <div class="meta-line subtle">${escapeHtml(linkScopeText(r.provider))}</div>
       <div class="row wrap gap" style="margin-top:12px">
-        <a class="ghost-btn" href="${r.book_url}" target="_blank" rel="noreferrer">Book</a>
-        <a class="ghost-btn" href="${r.find_url}" target="_blank" rel="noreferrer">Finn</a>
-        <a class="ghost-btn" href="${r.info_url}" target="_blank" rel="noreferrer">Info</a>
+        <a class="ghost-btn primary" href="${r.book_url}" target="_blank" rel="noreferrer">Åpne bookingflyt</a>
+        <a class="ghost-btn" href="${r.find_url}" target="_blank" rel="noreferrer">Åpne søkeresultat</a>
+        <button class="ghost-btn copy-itinerary" type="button" data-copy="${escapeHtmlAttr(searchDetails)}">Kopier reisedetaljer</button>
+        <a class="ghost-btn" href="${r.info_url}" target="_blank" rel="noreferrer">Regler/info</a>
       </div>
     </article>`;
+}
+
+function formatSearchDetails(r) {
+  return [
+    `${r.provider} ${r.carrier ? `(${r.carrier})` : ''}`.trim(),
+    `${r.origin} -> ${r.destination}`,
+    `Dato: ${r.date}`,
+    `Cabin: ${r.cabin}`,
+    `Seter: ${r.seats}`,
+    `Poeng: ${r.points}`,
+    `Avgifter: ${r.taxes}`,
+    `Direkte: ${r.direct ? 'Ja' : 'Nei'}`,
+    `Segmenter: ${(r.segments || []).join(' > ') || `${r.origin}-${r.destination}`}`,
+    `Book: ${r.book_url}`,
+    `Finn: ${r.find_url}`
+  ].join('\n');
+}
+
+function linkScopeText(provider) {
+  if (provider === 'SAS') {
+    return 'SAS-lenker åpner riktig rute + måned. Endelig flightvalg gjøres i SAS Award Finder.';
+  }
+  return 'Partnerlenker åpner SAS partnerflyt/regler. Verifiser flightdetaljer i SAS før booking.';
+}
+
+function providerClass(provider) {
+  if (provider === 'SkyTeam') return 'provider-skyteam';
+  if (provider === 'Both') return 'provider-both';
+  return 'provider-sas';
 }
 
 function fmt(v) {
@@ -239,6 +279,23 @@ function shortFmt(v) {
 function escapeHtml(t) {
   return String(t || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
 }
+function escapeHtmlAttr(t) {
+  return escapeHtml(String(t || '')).replaceAll('\n', '&#10;');
+}
+
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.copy-itinerary');
+  if (!btn) return;
+  const text = btn.getAttribute('data-copy')?.replaceAll('&#10;', '\n') || '';
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = 'Kopiert';
+    setTimeout(() => { btn.textContent = 'Kopier reisedetaljer'; }, 1500);
+  } catch (_) {
+    alert('Kunne ikke kopiere automatisk. Prøv igjen.');
+  }
+});
 
 async function loadValue() {
   const data = await (await fetch('/api/value-feed')).json();
@@ -255,14 +312,24 @@ loadValue();
 
 async function loadTelegramStatus() {
   const data = await (await fetch('/api/telegram/status')).json();
-  document.getElementById('telegram-status').textContent = data.configured ? 'Telegram: konfigurert' : 'Telegram: ikke konfigurert';
+  const status = document.getElementById('telegram-status');
+  const help = document.getElementById('telegram-help');
+  status.textContent = data.configured ? 'Telegram-kanal: aktiv.' : `Telegram-kanal: mangler konfig. (${(data.missing || []).join(', ')})`;
+  help.textContent = data.configured
+    ? `Test knappen sender en ekte melding til chat-id i miljøvariablene. ${data.worker_hint || ''}`
+    : `Legg til manglende miljøvariabler og deploy på nytt. ${data.worker_hint || ''}`;
 }
 loadTelegramStatus();
 
 document.getElementById('telegram-test')?.addEventListener('click', async () => {
   const res = await fetch('/api/telegram/test', { method: 'POST' });
   const data = await res.json();
-  alert(data.ok ? 'Telegram-test sendt' : (data.error || 'Kunne ikke sende'));
+  if (data.ok) {
+    alert('Telegram-test sendt. Sjekk chatten din.');
+  } else {
+    const missing = (data.missing || []).join(', ');
+    alert(data.error || `Kunne ikke sende. Mangler: ${missing}`);
+  }
 });
 
 const subForm = document.getElementById('subscription-form');
@@ -277,7 +344,7 @@ if (subForm) {
     payload.destination = normalizeAirportValue(payload.destination);
     payload.direct_only = fd.get('direct_only') === 'on';
     payload.include_nearby = fd.get('include_nearby') === 'on';
-    payload.telegram_enabled = true;
+    payload.telegram_enabled = fd.get('telegram_enabled') === 'on';
     payload.passengers = Number(payload.passengers || 1);
     payload.min_seats = Number(payload.min_seats || 1);
     const data = await postJson('/api/subscriptions', payload);
@@ -300,10 +367,11 @@ async function loadSubscriptions() {
     <div class="result">
       <div class="row between wrap gap">
         <div>
-          <div class="tag">${s.provider}</div>
+          <div class="tag ${providerClass(s.provider)}">${s.provider}</div>
           <strong>${s.origin} → ${s.destination}</strong>
           <div class="meta-line">${s.start_date || 'åpen start'} til ${s.end_date || 'åpen slutt'} · ${s.cabin} · ${s.passengers} pax · min ${s.min_seats} seter</div>
           <div class="meta-line">${s.include_nearby ? 'Gateway-byer er slått på' : 'Kun valgt avreiseflyplass'}</div>
+          <div class="meta-line">Varslingskanaler: ${renderChannels(s.channels, s.telegram_enabled)}</div>
         </div>
         <button onclick="deleteSub(${s.id})">Slett</button>
       </div>
@@ -322,9 +390,20 @@ async function loadDiscoveries() {
     t.innerHTML = `<div class="empty">Ingen nye funn ennå. Worker vil fylle dette når appen kjører hostet.</div>`;
     return;
   }
-  t.innerHTML = data.results.map(d => `<div class="result"><div class="tag">${d.provider}</div><div class="meta-line">${escapeHtml(d.route_key)}</div><div class="meta-line">${d.first_seen_at}</div></div>`).join('');
+  t.innerHTML = data.results.map(d => `<div class="result"><div class="tag ${providerClass(d.provider)}">${d.provider}</div><div class="meta-line">${escapeHtml(d.route_key)}</div><div class="meta-line">${d.first_seen_at}</div></div>`).join('');
 }
 loadDiscoveries();
+
+function renderChannels(channels, telegramEnabled) {
+  const rows = Array.isArray(channels) ? channels : [];
+  if (!rows.length) {
+    return telegramEnabled ? 'Telegram (legacy)' : 'Ingen aktive';
+  }
+  const names = rows
+    .filter(c => c.enabled)
+    .map(c => c.channel === 'push' ? 'Push (ikke aktivert ennå)' : 'Telegram');
+  return names.length ? names.join(', ') : 'Ingen aktive';
+}
 
 function wireAirportAutocomplete(container) {
   container.querySelectorAll('.combo input[name="origin"], .combo input[name="destination"]').forEach(input => {
