@@ -45,12 +45,11 @@ def api_gateways():
     return jsonify({'origin': origin, 'results': expand_origins(origin, include)})
 
 
-@app.route('/api/search', methods=['POST'])
-def api_search():
-    payload = request.get_json(force=True)
+def _search_payload(payload: dict):
     provider = payload.get('provider', 'SAS')
     include_nearby = bool(payload.get('include_nearby', False))
-    results = find_results(
+    mode = payload.get('mode', 'route_search')
+    return find_results(
         provider,
         payload.get('origin', ''),
         payload.get('destination', ''),
@@ -60,20 +59,28 @@ def api_search():
         int(payload.get('passengers', 1)),
         bool(payload.get('direct_only', False)),
         include_nearby,
+        mode=mode,
     )
+
+
+@app.route('/api/search', methods=['POST'])
+def api_search():
+    payload = request.get_json(force=True)
+    results = _search_payload(payload)
     return jsonify({
         'results': results,
         'calendar': build_calendar(results),
         'count': len(results),
-        'provider': provider,
-        'expanded_origins': expand_origins(payload.get('origin', ''), include_nearby),
+        'provider': payload.get('provider', 'SAS'),
+        'expanded_origins': expand_origins(payload.get('origin', ''), bool(payload.get('include_nearby', False))),
+        'mode': payload.get('mode', 'route_search'),
     })
 
 
 @app.route('/api/value-feed')
 def api_value_feed():
-    sas = find_results('SAS', '', '', '', '', 'Any', 1, False, False)
-    sky = find_results('SkyTeam', '', '', '', '', 'Any', 1, False, False)
+    sas = find_results('SAS', '', '', '', '', 'Any', 1, False, False, mode='best_value')
+    sky = find_results('SkyTeam', '', '', '', '', 'Any', 1, False, False, mode='best_value')
     rows = build_value_feed(sas + sky)
     return jsonify({'results': rows, 'count': len(rows)})
 
@@ -105,25 +112,18 @@ def api_telegram_status():
 
 @app.route('/api/telegram/test', methods=['POST'])
 def api_telegram_test():
-    result = send_message('✅ Testvarsel fra EuroBonus Award Explorer V3.3')
+    result = send_message('✅ Testvarsel fra EuroBonus Award Explorer V3.4')
     status = 200 if result.get('ok') else 400
     return jsonify(result), status
 
 
 @app.route('/export.csv')
 def export_csv():
-    include_nearby = request.args.get('include_nearby', 'false').lower() == 'true'
-    results = find_results(
-        request.args.get('provider', 'SAS'),
-        request.args.get('origin', ''),
-        request.args.get('destination', ''),
-        request.args.get('start_date', ''),
-        request.args.get('end_date', ''),
-        request.args.get('cabin', 'Any'),
-        int(request.args.get('passengers', 1)),
-        request.args.get('direct_only', 'false').lower() == 'true',
-        include_nearby,
-    )
+    payload = dict(request.args)
+    payload['include_nearby'] = request.args.get('include_nearby', 'false').lower() == 'true'
+    payload['direct_only'] = request.args.get('direct_only', 'false').lower() == 'true'
+    payload['passengers'] = int(request.args.get('passengers', 1))
+    results = _search_payload(payload)
     out = io.StringIO()
     writer = csv.DictWriter(
         out,

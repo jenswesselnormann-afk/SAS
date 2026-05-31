@@ -1,0 +1,43 @@
+<form class="search-form form-grid wide-search">
+  <select name="provider_select">
+    <option value="SAS">SAS</option>
+    <option value="SkyTeam">SkyTeam</option>
+    <option value="Both">SAS + SkyTeam</option>
+  </select>
+  <input type="hidden" name="provider" value="SAS">
+  <select name="mode">
+    <option value="route_search">Kalendersøk</option>
+    <option value="any_routes">Any routes</option>
+    <option value="best_value">Best value</option>
+    <option value="most_hits">Flest hits</option>
+  </select>
+  <div class="combo">
+    <input name="origin" placeholder="Fra, f.eks. OSL eller Oslo" required>
+    <div class="airport-suggestions"></div>
+  </div>
+  <div class="combo">
+    <input name="destination" placeholder="Til, f.eks. JFK, Tokyo eller la stå tom på Any routes">
+    <div class="airport-suggestions"></div>
+  </div>
+  <input type="date" name="start_date">
+  <input type="date" name="end_date">
+  <select name="quick_range">
+    <option value="">Valgfritt intervall</option>
+    <option value="30">Neste 30 dager</option>
+    <option value="90">Neste 90 dager</option>
+    <option value="180">Neste 180 dager</option>
+    <option value="365">Neste 365 dager</option>
+  </select>
+  <select name="cabin">
+    <option>Any</option>
+    <option>Economy</option>
+    <option>Premium</option>
+    <option>Business</option>
+    <option>First</option>
+  </select>
+  <input type="number" name="passengers" min="1" max="9" value="1">
+  <label class="toggle"><input type="checkbox" name="direct_only"> Kun direkte</label>
+  <label class="toggle"><input type="checkbox" name="include_nearby" checked> Sjekk gateway-byer også</label>
+  <button type="submit">Søk bonusreiser</button>
+  <a class="ghost-btn export-link" href="/export.csv">Eksporter CSV</a>
+</form>
