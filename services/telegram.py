@@ -7,6 +7,18 @@ def is_configured():
     return bool(os.getenv('TELEGRAM_BOT_TOKEN') and os.getenv('TELEGRAM_CHAT_ID'))
 
 
+def config_status():
+    missing = []
+    if not os.getenv('TELEGRAM_BOT_TOKEN'):
+        missing.append('TELEGRAM_BOT_TOKEN')
+    if not os.getenv('TELEGRAM_CHAT_ID'):
+        missing.append('TELEGRAM_CHAT_ID')
+    return {
+        'configured': not missing,
+        'missing': missing,
+    }
+
+
 def send_message(text: str):
     token = os.getenv('TELEGRAM_BOT_TOKEN')
     chat_id = os.getenv('TELEGRAM_CHAT_ID')

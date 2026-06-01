@@ -1,245 +1,366 @@
 from __future__ import annotations
-from datetime import date, timedelta
-from hashlib import sha256
-from typing import List, Dict, Any
+from datetime import date, datetime, timedelta
+import logging
+import os
+import re
+from typing import Any, Dict, List, Optional, Tuple
+
+import requests
+
 from services.airports import airport_label
 from services.gateways import expand_origins
 
-SAS_ROUTES = [
-    ('OSL','EWR', True, 510), ('OSL','JFK', True, 500), ('CPH','JFK', True, 520), ('CPH','EWR', True, 510),
-    ('ARN','EWR', True, 505), ('ARN','JFK', True, 500), ('OSL','NCE', True, 175), ('OSL','PMI', True, 205),
-    ('OSL','TRD', True, 55), ('OSL','TOS', True, 110), ('BGO','OSL', True, 55), ('OSL','LHR', True, 135)
-]
-SKYTEAM_ROUTES = [
-    ('OSL','NRT','KLM', False, 950, ['OSL-AMS', 'AMS-NRT']),
-    ('OSL','ICN','Korean Air', False, 930, ['OSL-CDG', 'CDG-ICN']),
-    ('OSL','JFK','Air France', False, 700, ['OSL-CDG', 'CDG-JFK']),
-    ('OSL','ATL','Delta', False, 720, ['OSL-AMS', 'AMS-ATL']),
-    ('OSL','LAX','Virgin Atlantic', False, 880, ['OSL-LHR', 'LHR-LAX']),
-    ('OSL','CUN','KLM', False, 940, ['OSL-AMS', 'AMS-CUN']),
-    ('OSL','GRU','Air France', False, 1040, ['OSL-CDG', 'CDG-GRU']),
-    ('OSL','SCL','Delta', False, 1180, ['OSL-ATL', 'ATL-SCL']),
-    ('ARN','NRT','KLM', False, 900, ['ARN-AMS', 'AMS-NRT']),
-    ('CPH','JFK','Virgin Atlantic', False, 700, ['CPH-LHR', 'LHR-JFK'])
-]
+LOG = logging.getLogger(__name__)
 
-CASH_TAX_BASE = {'Economy': 220, 'Premium': 390, 'Business': 690, 'First': 1100}
-POINTS_BASE_SAS = {'Economy': 15000, 'Premium': 30000, 'Business': 50000, 'First': 90000}
-POINTS_BASE_SKY = {'Economy': 70000, 'Premium': 105000, 'Business': 130000, 'First': 175000}
+SAS_BASE_URL = os.environ.get("SAS_AWARD_BASE_URL", "https://future.flysas.com").rstrip("/")
+SAS_MARKET = os.environ.get("SAS_AWARD_MARKET", "no-no")
+HTTP_TIMEOUT_SECONDS = float(os.environ.get("SAS_AWARD_TIMEOUT_SECONDS", "15"))
+MAX_MONTHS = int(os.environ.get("SAS_AWARD_MAX_MONTHS", "12"))
+
+CABIN_TO_CODE = {
+    "Economy": "AG",
+    "Premium": "AP",
+    "Business": "AB",
+}
+CODE_TO_CABIN = {
+    "AG": "Economy",
+    "AP": "Premium",
+    "AB": "Business",
+}
+ORDERED_CABIN_CODES = ("AB", "AP", "AG")
 
 
-def _seed(text: str) -> int:
-    return int(sha256(text.encode()).hexdigest()[:8], 16)
+def find_results(
+    provider: str,
+    origin: str,
+    destination: str,
+    start_date: str,
+    end_date: str,
+    cabin: str,
+    passengers: int,
+    direct_only: bool,
+    include_nearby: bool = False,
+    mode: str = "route_search",
+) -> List[Dict[str, Any]]:
+    mode = mode if mode in {"route_search", "any_routes", "most_hits"} else "route_search"
+    requested_origin = _iata(origin)
+    requested_destination = _iata(destination)
+    passengers = max(1, int(passengers or 1))
+    requested_cabin = (cabin or "Any").strip()
+    checked_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
+    if provider == "SkyTeam":
+        return []
 
-def daterange(start: date, end: date):
-    cur = start
-    while cur <= end:
-        yield cur
-        cur += timedelta(days=1)
+    origins = _resolve_origins(requested_origin, include_nearby)
+    if not origins:
+        return []
 
+    broad_mode = mode in {"any_routes", "most_hits"}
+    if not broad_mode and not requested_destination:
+        return []
 
-def _providers_for(provider: str):
-    if provider == 'Both':
-        return ['SAS', 'SkyTeam']
-    if provider in ('SAS', 'SkyTeam'):
-        return [provider]
-    return ['SAS']
+    start, end = _date_bounds(start_date, end_date)
+    month_tokens = _month_tokens(start, end)
+    out: List[Dict[str, Any]] = []
 
+    for search_origin in origins:
+        for month in month_tokens:
+            try:
+                destinations_payload = _fetch_destinations(
+                    market=SAS_MARKET,
+                    origin=search_origin,
+                    destinations=[requested_destination] if requested_destination else [],
+                    selected_month=month,
+                    passengers=passengers,
+                    direct=bool(direct_only),
+                )
+            except Exception as exc:
+                LOG.warning("SAS destinations request failed for %s/%s: %s", search_origin, month, exc)
+                continue
 
-def find_results(provider: str, origin: str, destination: str, start_date: str, end_date: str, cabin: str, passengers: int, direct_only: bool, include_nearby: bool=False, mode: str='route_search') -> List[Dict[str, Any]]:
-    cabin = cabin or 'Any'
-    mode = mode if mode in {'route_search', 'any_routes', 'best_value', 'most_hits'} else 'route_search'
-    start = date.fromisoformat(start_date) if start_date else date.today()
-    end = date.fromisoformat(end_date) if end_date else min(date.today() + timedelta(days=60), start + timedelta(days=30))
-    if end > date.today() + timedelta(days=365):
-        end = date.today() + timedelta(days=365)
-
-    requested_origin = (origin or '').upper().strip()
-    allowed_origins = set(expand_origins(requested_origin, include_nearby)) if requested_origin else set()
-    out = []
-    providers = _providers_for(provider)
-    broad_destination = mode in {'any_routes', 'most_hits'}
-    for selected_provider in providers:
-        routes = SAS_ROUTES if selected_provider == 'SAS' else SKYTEAM_ROUTES
-        for d in daterange(start, end):
-            for route in routes:
-                if selected_provider == 'SAS':
-                    o, dest, direct, duration = route
-                    carrier = 'SAS'
-                    segments = [f'{o}-{dest}'] if direct else []
-                else:
-                    o, dest, carrier, direct, duration, segments = route
-                if requested_origin and o not in allowed_origins:
+            for destination_row in destinations_payload:
+                airport_code = _iata(destination_row.get("airportCode", ""))
+                city_code = _iata(destination_row.get("cityCode", ""))
+                if requested_destination and airport_code != requested_destination and city_code != requested_destination:
                     continue
-                if not broad_destination and destination and dest != destination.upper():
-                    continue
-                if direct_only and not direct:
-                    continue
+                availability = destination_row.get("availability", {}) or {}
+                for day in availability.get("outbound", []) or []:
+                    flight_date = day.get("date", "")
+                    if not _in_date_window(flight_date, start, end):
+                        continue
+                    chosen = _pick_cabin_and_seats(day, requested_cabin, passengers)
+                    if not chosen:
+                        continue
+                    chosen_code, seats = chosen
+                    out.append(
+                        _build_row(
+                            requested_origin=requested_origin,
+                            actual_origin=search_origin,
+                            destination_airport=airport_code,
+                            flight_date=flight_date,
+                            cabin_code=chosen_code,
+                            seats=seats,
+                            passengers=passengers,
+                            direct_filter=bool(direct_only),
+                            checked_at=checked_at,
+                            city_name=destination_row.get("cityName", ""),
+                            airport_name=destination_row.get("airportName", ""),
+                        )
+                    )
 
-                seed = _seed(f'{selected_provider}|{o}|{dest}|{d.isoformat()}|{cabin}|{mode}')
-                availability_mod = 4 if mode == 'most_hits' else 5 if mode in {'any_routes', 'best_value'} else 7
-                if seed % availability_mod not in (0, 1, 2):
-                    continue
-
-                selected_cabin = _pick_cabin(cabin, seed, selected_provider)
-                seats = _seat_count(seed)
-                if seats < passengers:
-                    continue
-
-                points = _points(selected_provider, selected_cabin, duration, seed)
-                taxes = CASH_TAX_BASE.get(selected_cabin, 350) + (0 if direct else 250) + (seed % 170)
-                row = {
-                    'provider': selected_provider,
-                    'carrier': carrier,
-                    'origin': o,
-                    'destination': dest,
-                    'origin_label': airport_label(o),
-                    'destination_label': airport_label(dest),
-                    'date': d.isoformat(),
-                    'cabin': selected_cabin,
-                    'seats': seats,
-                    'points': points,
-                    'taxes': taxes,
-                    'direct': direct,
-                    'duration_minutes': duration,
-                    'segments': segments,
-                    'score': round(_value_score(selected_cabin, duration, points, seats, direct), 2),
-                    'calendar_price': points,
-                    'find_url': _find_url(selected_provider, o, dest, d),
-                    'book_url': _book_url(selected_provider, o, dest, d),
-                    'info_url': _info_url(selected_provider, carrier),
-                    'booking_note': _booking_note(selected_provider),
-                    'requested_origin': requested_origin or o,
-                    'reposition_required': bool(requested_origin and o != requested_origin),
-                    'reposition_note': _reposition_note(requested_origin, o),
-                }
-                out.append(row)
-    uniq = {}
-    for r in sorted(out, key=lambda r: (r['date'], r['points'], -r['score'])):
-        key = (r['provider'], r['date'], r['origin'], r['destination'], r['cabin'], tuple(r.get('segments', [])))
-        if key not in uniq:
-            uniq[key] = r
-    rows = list(uniq.values())
-    if mode == 'best_value':
-        rows.sort(key=lambda r: (-r['score'], r['points'], r['taxes'], -r['seats']))
-    elif mode == 'most_hits':
-        rows.sort(key=lambda r: (r['date'], -r['seats'], r['points'], -r['score']))
+    rows = _dedupe_rows(out)
+    if mode == "most_hits":
+        rows.sort(key=lambda row: (row["date"], -row.get("seats", 0), row.get("destination", "")))
     else:
-        rows.sort(key=lambda r: (r['date'], r['points'], -r['seats']))
+        rows.sort(key=lambda row: (row["date"], row.get("destination", ""), -row.get("seats", 0)))
     return rows[:600]
 
 
 def build_calendar(results: List[Dict[str, Any]]):
     grouped: Dict[str, List[Dict[str, Any]]] = {}
-    for r in results:
-        grouped.setdefault(r['date'], []).append(r)
+    for result in results:
+        if result.get("source_type") != "live":
+            continue
+        grouped.setdefault(result["date"], []).append(result)
+
     calendar = []
     for day in sorted(grouped):
         rows = grouped[day]
-        best = sorted(rows, key=lambda r: (r['points'], -r['seats'], -r['score']))[0]
-        calendar.append({
-            'date': best['date'],
-            'points': best['points'],
-            'cabin': best['cabin'],
-            'seats': sum(r.get('seats', 0) for r in rows),
-            'direct': best['direct'],
-            'book_url': best['book_url'],
-            'origin': best['origin'],
-            'destination': best['destination'],
-            'origin_label': best['origin_label'],
-            'destination_label': best['destination_label'],
-            'requested_origin': best.get('requested_origin', best['origin']),
-            'hit_count': len(rows),
-            'best_score': max(r.get('score', 0) for r in rows),
-        })
+        best = sorted(rows, key=lambda row: (-row.get("seats", 0), row.get("destination", "")))[0]
+        calendar.append(
+            {
+                "date": best["date"],
+                "points": None,
+                "cabin": best["cabin"],
+                "seats": best.get("seats", 0),
+                "direct": best.get("direct"),
+                "book_url": best["book_url"],
+                "origin": best["origin"],
+                "destination": best["destination"],
+                "origin_label": best["origin_label"],
+                "destination_label": best["destination_label"],
+                "requested_origin": best.get("requested_origin", best["origin"]),
+                "hit_count": len(rows),
+                "best_score": None,
+                "source_type": best.get("source_type"),
+                "source_name": best.get("source_name"),
+                "checked_at": best.get("checked_at"),
+                "verification_level": best.get("verification_level"),
+            }
+        )
     return calendar
 
 
 def build_value_feed(all_rows: List[Dict[str, Any]]):
-    rows = []
-    for r in all_rows:
-        if r['duration_minutes'] < 300:
-            continue
-        if r['cabin'] not in ('Premium', 'Business', 'First'):
-            continue
-        r = dict(r)
-        r['value_tag'] = _value_tag(r)
-        rows.append(r)
-    return sorted(rows, key=lambda x: (-x['score'], x['points'], x['taxes']))[:60]
+    return []
 
 
-def _pick_cabin(cabin: str, seed: int, provider: str):
-    if cabin and cabin != 'Any':
-        return cabin
-    options = ['Economy', 'Premium', 'Business'] if provider == 'SAS' else ['Economy', 'Business']
-    return options[seed % len(options)]
-
-
-def _seat_count(seed: int):
-    return [1, 2, 2, 3, 4][seed % 5]
-
-
-def _points(provider: str, cabin: str, duration: int, seed: int):
-    if provider == 'SAS':
-        base = POINTS_BASE_SAS[cabin]
-        if duration < 180 and cabin == 'Economy':
-            base = 5000 + (seed % 2) * 5000
-        return base + (seed % 3) * 2500
-    base = POINTS_BASE_SKY[cabin]
-    if duration > 900:
-        base += 35000 if cabin == 'Business' else 20000
-    return base + (seed % 4) * 17500
-
-
-def _value_score(cabin: str, duration: int, points: int, seats: int, direct: bool):
-    cabin_bonus = {'Economy': 1.0, 'Premium': 1.35, 'Business': 2.25, 'First': 2.8}.get(cabin, 1.0)
-    return ((duration / max(points, 1)) * 1000 * cabin_bonus) + (0.35 * seats) + (0.5 if direct else 0)
-
-
-def _find_url(provider: str, origin: str, destination: str, d: date):
-    if provider == 'SAS':
-        return f'https://www.flysas.com/en/award-finder?from={origin}&to={destination}&month={d.strftime("%Y-%m")}'
-    return 'https://www.flysas.com/ca-en/eurobonus/points/use/partner-award-flights/'
-
-
-def _book_url(provider: str, origin: str, destination: str, d: date):
-    if provider == 'SAS':
-        return f'https://www.flysas.com/en/award-finder?from={origin}&to={destination}&month={d.strftime("%Y-%m")}'
-    return 'https://www.flysas.com/en/award-finder'
-
-
-def _info_url(provider: str, carrier: str):
-    if provider == 'SAS':
-        return 'https://www.flysas.com/en/travel-info/ticket-types/award-tickets'
-    lookup = {
-        'Air France': 'https://www.flysas.com/en/about-us/skyteam',
-        'KLM': 'https://www.flysas.com/en/about-us/skyteam',
-        'Delta': 'https://www.flysas.com/en/about-us/skyteam',
-        'Korean Air': 'https://www.flysas.com/en/about-us/skyteam',
-        'Virgin Atlantic': 'https://www.flysas.com/en/about-us/skyteam',
+def source_summary_for(provider: str, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    provider = provider if provider in {"SAS", "SkyTeam", "Both"} else "SAS"
+    has_live = any(row.get("source_type") == "live" for row in results)
+    notices: List[str] = []
+    if provider in {"SkyTeam", "Both"}:
+        notices.append("SkyTeam/partner-data er ikke live-integrert i denne versjonen og er derfor deaktivert.")
+    if provider == "SkyTeam":
+        notices.append("Velg SAS for verifiserte live-resultater.")
+    if provider in {"SAS", "Both"} and not has_live:
+        notices.append("Ingen live SAS-tilgjengelighet funnet i valgt intervall.")
+    return {
+        "provider": provider,
+        "has_live": has_live,
+        "notices": notices,
     }
-    return lookup.get(carrier, 'https://www.flysas.com/ca-en/eurobonus/points/use/partner-award-flights/')
 
 
+def _fetch_destinations(
+    market: str,
+    origin: str,
+    destinations: List[str],
+    selected_month: str,
+    passengers: int,
+    direct: bool,
+) -> List[Dict[str, Any]]:
+    params = {
+        "market": market,
+        "origin": origin,
+        "destinations": ",".join([code for code in destinations if code]),
+        "selectedMonth": selected_month,
+        "passengers": str(max(1, int(passengers))),
+        "direct": str(bool(direct)).lower(),
+        "availability": "true",
+    }
+    return _request_json("/bff/award-finder/destinations/v1", params)
+
+
+def _request_json(path: str, params: Dict[str, str]) -> List[Dict[str, Any]]:
+    url = f"{SAS_BASE_URL}{path}"
+    last_error: Optional[Exception] = None
+    for _ in range(2):
+        try:
+            response = requests.get(url, params=params, timeout=HTTP_TIMEOUT_SECONDS)
+            if response.status_code == 429:
+                raise RuntimeError("SAS endpoint rate limited request (429)")
+            if response.status_code >= 500:
+                raise RuntimeError(f"SAS endpoint returned {response.status_code}")
+            if response.status_code != 200:
+                return []
+            payload = response.json()
+            if isinstance(payload, list):
+                return payload
+            return []
+        except Exception as exc:
+            last_error = exc
+    if last_error:
+        raise last_error
+    return []
+
+
+def _resolve_origins(requested_origin: str, include_nearby: bool) -> List[str]:
+    if not requested_origin:
+        return []
+    if not include_nearby:
+        return [requested_origin]
+    out = []
+    for origin in expand_origins(requested_origin, True):
+        code = _iata(origin)
+        if code and code not in out:
+            out.append(code)
+    return out or [requested_origin]
+
+
+def _date_bounds(start_date: str, end_date: str) -> Tuple[date, date]:
+    today = date.today()
+    start = date.fromisoformat(start_date) if start_date else today
+    end = date.fromisoformat(end_date) if end_date else min(start + timedelta(days=90), today + timedelta(days=365))
+    if end < start:
+        end = start
+    max_end = today + timedelta(days=365)
+    if end > max_end:
+        end = max_end
+    return start, end
+
+
+def _month_tokens(start: date, end: date) -> List[str]:
+    months: List[str] = []
+    cur = date(start.year, start.month, 1)
+    last = date(end.year, end.month, 1)
+    while cur <= last and len(months) < MAX_MONTHS:
+        months.append(f"{cur.year}{cur.month:02d}")
+        if cur.month == 12:
+            cur = date(cur.year + 1, 1, 1)
+        else:
+            cur = date(cur.year, cur.month + 1, 1)
+    return months
+
+
+def _in_date_window(raw_date: str, start: date, end: date) -> bool:
+    try:
+        parsed = date.fromisoformat(raw_date)
+        return start <= parsed <= end
+    except ValueError:
+        return False
+
+
+def _pick_cabin_and_seats(day: Dict[str, Any], requested_cabin: str, passengers: int) -> Optional[Tuple[str, int]]:
+    if requested_cabin == "First":
+        return None
+    if requested_cabin in CABIN_TO_CODE:
+        code = CABIN_TO_CODE[requested_cabin]
+        seats = int(day.get(code) or 0)
+        if seats >= passengers:
+            return code, seats
+        return None
+
+    for code in ORDERED_CABIN_CODES:
+        seats = int(day.get(code) or 0)
+        if seats >= passengers:
+            return code, seats
+    return None
+
+
+def _build_row(
+    requested_origin: str,
+    actual_origin: str,
+    destination_airport: str,
+    flight_date: str,
+    cabin_code: str,
+    seats: int,
+    passengers: int,
+    direct_filter: bool,
+    checked_at: str,
+    city_name: str,
+    airport_name: str,
+) -> Dict[str, Any]:
+    destination_label = airport_label(destination_airport)
+    if city_name and airport_name and destination_airport:
+        destination_label = f"{city_name} ({destination_airport})"
+
+    book_url = _book_url(actual_origin, destination_airport, flight_date, passengers, direct_filter)
+    return {
+        "provider": "SAS",
+        "carrier": "SAS",
+        "origin": actual_origin,
+        "destination": destination_airport,
+        "origin_label": airport_label(actual_origin),
+        "destination_label": destination_label,
+        "date": flight_date,
+        "cabin": CODE_TO_CABIN.get(cabin_code, "Economy"),
+        "seats": int(seats),
+        "points": None,
+        "taxes": None,
+        "direct": True if direct_filter else None,
+        "duration_minutes": None,
+        "segments": [],
+        "score": None,
+        "calendar_price": None,
+        "find_url": _find_url(actual_origin, destination_airport, flight_date),
+        "book_url": book_url,
+        "info_url": "https://www.flysas.com/en/eurobonus/points/fly-with-points/point-chart",
+        "booking_note": "Resultatet er hentet live fra SAS Award Finder beta-endepunkt.",
+        "requested_origin": requested_origin or actual_origin,
+        "reposition_required": bool(requested_origin and actual_origin != requested_origin),
+        "reposition_note": _reposition_note(requested_origin, actual_origin),
+        "source_type": "live",
+        "source_name": "SAS Award Finder BFF",
+        "checked_at": checked_at,
+        "verification_level": "live_api",
+    }
+
+
+def _dedupe_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    unique: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
+    for row in rows:
+        key = (row["provider"], row["date"], row["origin"], row["destination"])
+        existing = unique.get(key)
+        if not existing or row.get("seats", 0) > existing.get("seats", 0):
+            unique[key] = row
+    return list(unique.values())
+
+
+def _find_url(origin: str, destination: str, flight_date: str) -> str:
+    month = flight_date[:7].replace("-", "")
+    return (
+        f"{SAS_BASE_URL}/{SAS_MARKET}/award-finder"
+        f"?origin={origin}&destination={destination}&month={month}"
+    )
+
+
+def _book_url(origin: str, destination: str, flight_date: str, passengers: int, direct_only: bool) -> str:
+    return (
+        f"{SAS_BASE_URL}/{SAS_MARKET}/book-new/revenue/flights"
+        f"?origin={origin}&destination={destination}&adults={max(1, int(passengers))}&payWithPoints=&direct={str(direct_only).lower()}"
+        f"&outboundDate={flight_date}&tripType=one-way"
+    )
 
 
 def _reposition_note(requested_origin: str, actual_origin: str):
     if not requested_origin or requested_origin == actual_origin:
-        return ''
-    return f'Starter fra {actual_origin}. Vurder posisjoneringsfly fra {requested_origin}.'
-
-def _booking_note(provider: str):
-    if provider == 'SAS':
-        return 'SAS-awards kan normalt finnes og bookes via SAS Award Finder.'
-    return 'SkyTeam-partnerreiser følger partner-award-reglene hos SAS. Start i SAS award/partner-flow, og bruk partnerinfosiden hvis direkte dyplenke ikke fungerer.'
+        return ""
+    return f"Starter fra {actual_origin}. Vurder posisjoneringsfly fra {requested_origin}."
 
 
-def _value_tag(r):
-    if r['cabin'] == 'Business' and r['duration_minutes'] >= 480 and r['direct']:
-        return 'Langrute + business + direkte'
-    if r['cabin'] == 'Business' and r['duration_minutes'] >= 900:
-        return 'Svært god long-haul value'
-    if r['points'] <= 60000 and r['cabin'] in ('Premium', 'Business'):
-        return 'Lav poengpris'
-    return 'God totalverdi'
+def _iata(raw: str) -> str:
+    text = (raw or "").strip().upper()
+    match = re.search(r"\b([A-Z]{3})\b", text)
+    return match.group(1) if match else text

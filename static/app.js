@@ -1,5 +1,16 @@
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+if ('serviceWorker' in navigator || 'caches' in window) {
+  window.addEventListener('load', async () => {
+    try {
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map(registration => registration.unregister()));
+      }
+      if ('caches' in window) {
+        const cacheKeys = await caches.keys();
+        await Promise.all(cacheKeys.map(key => caches.delete(key)));
+      }
+    } catch (_) {}
+  });
 }
 
 const tabs = document.querySelectorAll('.tab');
@@ -49,7 +60,7 @@ Object.entries(searchSections).forEach(([key, cfg]) => {
       hint.textContent = data.expanded_origins?.length > 1 ? `Sjekker også gateway-byer: ${data.expanded_origins.join(', ')}` : '';
     }
     renderCalendar(document.getElementById(cfg.calendar), data.calendar, payload.provider || 'SAS', payload);
-    renderResults(document.getElementById(cfg.results), data.results, payload.mode);
+    renderResults(document.getElementById(cfg.results), data.results, payload.mode, data.notices || []);
     bindExport(form, payload);
   });
   bindExport(form, formPayload(form));
@@ -123,19 +134,18 @@ async function postJson(url, payload) {
 
 function renderCalendar(target, rows, provider, payload) {
   if (!rows.length) {
-    target.innerHTML = `<div class="card empty">Ingen kalenderfunn i dette intervallet. Prøv flere datoer, Any routes eller gateway-byer.</div>`;
+    target.innerHTML = `<div class="card empty">Ingen kalenderfunn i dette intervallet. Prøv flere datoer, Alle destinasjoner eller gateway-byer.</div>`;
     return;
   }
   const months = buildMonthBuckets(rows, payload.start_date, payload.end_date);
   const modeName = {
     route_search: 'Kalendersøk',
-    any_routes: 'Any routes',
-    best_value: 'Best value',
+    any_routes: 'Alle destinasjoner',
     most_hits: 'Flest hits'
   }[payload.mode] || 'Kalendersøk';
   target.innerHTML = `
     <div class="card calendar-wrap big-calendar">
-      <div class="header"><div><h3>${modeName}</h3><div class="meta-line">Billigste award per dato · setetall vises i cellen</div></div><span class="tag ${providerClass(provider)}">${escapeHtml(provider)}</span></div>
+      <div class="header"><div><h3>${modeName}</h3><div class="meta-line">Verifiserte live-treff per dato · setetall vises i cellen</div></div><span class="tag ${providerClass(provider)}">${escapeHtml(provider)}</span></div>
       <div class="months-grid">${months.map(renderMonth).join('')}</div>
     </div>`;
 }
@@ -182,30 +192,29 @@ function renderDay(day) {
   return `
     <a class="day-cell hit ${reposition ? 'reposition' : ''}" href="${day.book_url || '#'}" target="_blank" rel="noreferrer">
       <div class="date-num">${label}</div>
-      <div class="points">${shortFmt(day.points)}</div>
+      <div class="points">${shortFmt(day.seats)}</div>
       <div class="micro">${day.seats} seter</div>
       <div class="micro">${escapeHtml(day.origin || '')} → ${escapeHtml(day.destination || '')}</div>
     </a>`;
 }
 
-function renderResults(target, rows, mode = 'route_search') {
+function renderResults(target, rows, mode = 'route_search', notices = []) {
+  const noticeHtml = notices.length ? `<div class="card notice" style="margin-bottom:12px">${notices.map(n => `<div class="meta-line">${escapeHtml(n)}</div>`).join('')}</div>` : '';
   if (!rows.length) {
-    target.innerHTML = `<div class="card empty">Ingen treff akkurat nå. Prøv flere datoer, annen cabin, Any routes eller gateway-byer.</div>`;
+    target.innerHTML = `${noticeHtml}<div class="card empty">Ingen treff akkurat nå. Prøv flere datoer, annen cabin, Alle destinasjoner eller gateway-byer.</div>`;
     return;
   }
   const intro = {
     any_routes: 'Viser relevante ruter fra valgt avreiseflyplass og gateway-byer.',
-    best_value: 'Rangert på poengmessig verdi, cabin, flytid og setetall.',
     most_hits: 'Sortert for å vise mest tilgjengelighet først.'
-  }[mode] || 'Rangert etter dato og poeng.';
-  target.innerHTML = `<div class="card" style="margin-bottom:12px"><div class="row between wrap gap"><div class="meta-line">${intro}</div><span class="tag">${rows.length} treff</span></div></div><div class="results-grid">${rows.map(r => cardHtml(r, mode)).join('')}</div>`;
+  }[mode] || 'Rangert etter dato og setetilgjengelighet.';
+  target.innerHTML = `${noticeHtml}<div class="card" style="margin-bottom:12px"><div class="row between wrap gap"><div class="meta-line">${intro}</div><span class="tag">${rows.length} treff</span></div></div><div class="results-grid">${rows.map(r => cardHtml(r, mode)).join('')}</div>`;
 }
 
 function cardHtml(r, mode = 'route_search') {
   const searchDetails = formatSearchDetails(r);
   const providerCls = providerClass(r.provider);
-  const isValueMode = mode === 'best_value';
-  const modeBadge = isValueMode ? `<span class="tag value-badge">Best value</span>` : '';
+  const sourceBadge = r.source_type ? `<span class="tag">${escapeHtml(r.source_type)}</span>` : '';
   const gatewayBadge = r.reposition_required ? `<span class="tag gateway-badge">Gateway</span>` : '';
   return `
     <article class="result ${r.reposition_required ? 'result-reposition' : ''}">
@@ -213,21 +222,21 @@ function cardHtml(r, mode = 'route_search') {
         <div>
           <div class="result-badges">
             <span class="tag ${providerCls}">${r.provider}${r.carrier ? ` · ${escapeHtml(r.carrier)}` : ''}</span>
-            ${modeBadge}
+            ${sourceBadge}
             ${gatewayBadge}
           </div>
-          <h3>${escapeHtml(r.origin_label)} → ${escapeHtml(r.destination_label)}</h3>
-          <div class="meta-line">${r.date} · ${r.cabin} · ${r.direct ? 'Direkte' : 'Ikke direkte'}</div>
+          <h3>${escapeHtml(r.origin_label)} → ${escapeHtml(r.destination_label || r.destination)}</h3>
+          <div class="meta-line">${r.date} · ${r.cabin} · ${directText(r.direct)}</div>
         </div>
-        <div class="good strong">Score ${Number(r.score || 0).toFixed(2)}</div>
+        <div class="good strong">${fmt(r.seats)} seter</div>
       </div>
       <div class="results-grid mini-three">
-        <div class="calendar-cell"><div class="day">Poeng</div><div class="price">${fmt(r.points)}</div></div>
-        <div class="calendar-cell"><div class="day">Avgifter</div><div class="price">${fmt(r.taxes)}</div></div>
+        <div class="calendar-cell"><div class="day">Kilde</div><div class="price">${escapeHtml(r.source_name || 'ukjent')}</div></div>
+        <div class="calendar-cell"><div class="day">Verifisering</div><div class="price">${escapeHtml(r.verification_level || 'ukjent')}</div></div>
         <div class="calendar-cell"><div class="day">Seter</div><div class="price">${fmt(r.seats)}</div></div>
       </div>
       <div class="meta-line" style="margin-top:12px">Segmenter: ${escapeHtml((r.segments || []).join(' → ') || `${r.origin}-${r.destination}`)}</div>
-      <div class="meta-line">Flytid: ${Math.floor((r.duration_minutes || 0) / 60)} t ${(r.duration_minutes || 0) % 60} m</div>
+      <div class="meta-line">Sist sjekket: ${escapeHtml(r.checked_at || 'ukjent')}</div>
       ${r.reposition_required ? `<div class="meta-line warn">${escapeHtml(r.reposition_note || '')}</div>` : ''}
       <div class="meta-line">${escapeHtml(r.booking_note || '')}</div>
       <div class="meta-line subtle">${escapeHtml(linkScopeText(r.provider))}</div>
@@ -247,9 +256,9 @@ function formatSearchDetails(r) {
     `Dato: ${r.date}`,
     `Cabin: ${r.cabin}`,
     `Seter: ${r.seats}`,
-    `Poeng: ${r.points}`,
-    `Avgifter: ${r.taxes}`,
-    `Direkte: ${r.direct ? 'Ja' : 'Nei'}`,
+    `Direkte: ${directText(r.direct)}`,
+    `Kilde: ${r.source_name || ''}`,
+    `Verifisering: ${r.verification_level || ''}`,
     `Segmenter: ${(r.segments || []).join(' > ') || `${r.origin}-${r.destination}`}`,
     `Book: ${r.book_url}`,
     `Finn: ${r.find_url}`
@@ -258,9 +267,9 @@ function formatSearchDetails(r) {
 
 function linkScopeText(provider) {
   if (provider === 'SAS') {
-    return 'SAS-lenker åpner riktig rute + måned. Endelig flightvalg gjøres i SAS Award Finder.';
+    return 'SAS-lenker åpner SAS-flow med valgt rute og dato.';
   }
-  return 'Partnerlenker åpner SAS partnerflyt/regler. Verifiser flightdetaljer i SAS før booking.';
+  return 'Partnerdata er ikke live-verifisert i denne versjonen.';
 }
 
 function providerClass(provider) {
@@ -274,6 +283,11 @@ function fmt(v) {
 }
 function shortFmt(v) {
   return v >= 1000 ? `${Math.round(v / 1000)}k` : String(v || 0);
+}
+function directText(v) {
+  if (v === true) return 'Direkte';
+  if (v === false) return 'Ikke direkte';
+  return 'Direkte/ikke-direkte ikke spesifisert';
 }
 
 function escapeHtml(t) {
@@ -296,19 +310,6 @@ document.addEventListener('click', async (e) => {
     alert('Kunne ikke kopiere automatisk. Prøv igjen.');
   }
 });
-
-async function loadValue() {
-  const data = await (await fetch('/api/value-feed')).json();
-  const t = document.getElementById('value-results');
-  if (!data.results.length) {
-    t.innerHTML = `<div class="empty">Ingen value-funn akkurat nå.</div>`;
-    return;
-  }
-  t.innerHTML = `<div class="results-grid">${data.results.map(r => cardHtml({ ...r, carrier: r.value_tag })).join('')}</div>`;
-}
-
-document.getElementById('refresh-value')?.addEventListener('click', loadValue);
-loadValue();
 
 async function loadTelegramStatus() {
   const data = await (await fetch('/api/telegram/status')).json();

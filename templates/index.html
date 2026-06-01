@@ -5,26 +5,26 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>EuroBonus Award Explorer</title>
   <meta name="theme-color" content="#0c1118">
-  <meta name="description" content="SAS og SkyTeam award-søk med watcher-varsler, gateway-byer og lavpriskalender-look.">
-  <link rel="manifest" href="/manifest.json">
-  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-192.png') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <meta name="description" content="SAS live award-søk med verifisert tilgjengelighet, kalender og watchers.">
+  <link rel="manifest" href="/manifest.json?v={{ asset_version }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-192.png') }}?v={{ asset_version }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v={{ asset_version }}">
 </head>
 <body>
   <div class="app-shell premium-shell">
     <header class="hero">
       <div class="hero-copy">
-        <p class="eyebrow">SAS + SkyTeam award intelligence</p>
+        <p class="eyebrow">SAS live award availability</p>
         <h1>Find Better EuroBonus Redemptions Faster</h1>
-        <p class="muted max">Søk bredt, overvåk rutene du bryr deg om, og gå videre til riktig SAS-bookingflyt med tydelig kontekst for dato, cabin, seter og gateway-start.</p>
+        <p class="muted max">Søk bredt i live SAS-data, overvåk rutene du bryr deg om, og gå videre til SAS-bookingflyten med tydelig kilde- og verifiseringsstatus.</p>
         <div class="hero-stats">
-          <span class="stat-chip"><strong>Kalender</strong> best pris per dato</span>
+          <span class="stat-chip"><strong>Kalender</strong> verifiserte dager per dato</span>
           <span class="stat-chip"><strong>Watchers</strong> overvåk automatisk</span>
           <span class="stat-chip"><strong>Gateway</strong> oppdag bedre starter</span>
         </div>
       </div>
       <div class="hero-actions">
-        <span class="pill">4 søkemoduser</span>
+        <span class="pill">Live SAS-kilde</span>
         <span class="pill">Gateway intelligence</span>
         <span class="pill">Telegram alerts</span>
       </div>
@@ -32,7 +32,7 @@
 
     <div class="card banner">
       <div>
-        <strong>Live strategi:</strong> start med Any routes / Flest hits for å kartlegge muligheter, snevr inn med Kalendersøk, og lagre de beste rutene som watchers.
+        <strong>Live strategi:</strong> start med Alle destinasjoner / Flest hits for å kartlegge muligheter, snevr inn med Kalendersøk, og lagre rutene som watchers.
       </div>
       <div>
         <div id="telegram-status" class="muted"></div>
@@ -45,7 +45,6 @@
       <button class="tab" data-tab="sas">SAS</button>
       <button class="tab" data-tab="skyteam">SkyTeam</button>
       <button class="tab tab-watchers" data-tab="alerts">Watchers</button>
-      <button class="tab" data-tab="value">Value</button>
       <button class="tab" data-tab="help">Bookinghjelp</button>
     </nav>
 
@@ -54,7 +53,7 @@
         <div class="row between wrap gap">
           <div>
             <h2>Start søket</h2>
-            <p class="muted">Kalenderen viser best priset alternativ per dato, mens resultatkortene gir hele bildet med seter, segmenter, score og bookingkontekst.</p>
+            <p class="muted">Kalenderen viser verifisert live-tilgjengelighet per dato, mens resultatkortene viser seter, kilde og bookingkontekst.</p>
           </div>
         </div>
         {% include 'partials/search_form.html' %}
@@ -80,7 +79,7 @@
       </div>
       <div class="card notice">
         <strong>Viktig:</strong>
-        <span class="muted">Her prøver appen å vise bonusseter du kan gå videre med hos SAS. Når beste løsning starter fra London eller Amsterdam, vil du se det tydelig som en posisjoneringsmulighet fra Oslo.</span>
+        <span class="muted">SkyTeam/partner-integrasjon er ikke live-verifisert i denne versjonen. Bruk SAS-fanen for verifiserte resultater.</span>
       </div>
       <div id="skyteam-calendar"></div>
       <div id="skyteam-results"></div>
@@ -91,12 +90,12 @@
         <div class="row between wrap gap">
           <div>
             <h2>Watchers og varsler</h2>
-            <p class="muted">Lagre ønskede ruter. Worker kan oppdatere jevnlig og sende Telegram når nye seter dukker opp.</p>
+            <p class="muted">Lagre ønskede ruter. Worker sender varsler kun fra verifiserte live SAS-resultater.</p>
           </div>
           <button id="telegram-test">Send Telegram-test</button>
         </div>
         <form id="subscription-form" class="form-grid compact">
-          <select name="provider"><option>SAS</option><option>SkyTeam</option><option>Both</option></select>
+          <select name="provider"><option value="SAS">SAS</option><option value="SkyTeam">SkyTeam (deaktivert)</option><option value="Both">Both (kun SAS live)</option></select>
           <div class="combo"><input name="origin" placeholder="Fra, f.eks. OSL" required><div class="airport-suggestions"></div></div>
           <div class="combo"><input name="destination" placeholder="Til, f.eks. HND" required><div class="airport-suggestions"></div></div>
           <input type="date" name="start_date">
@@ -116,16 +115,6 @@
       </div>
     </section>
 
-    <section class="panel" id="value">
-      <div class="card stack">
-        <div class="row between wrap gap">
-          <div><h2>Value-feed</h2><p class="muted">Rangert på langrute, cabin, poengpris, setetall og friksjon.</p></div>
-          <button id="refresh-value">Oppdater value</button>
-        </div>
-        <div id="value-results"></div>
-      </div>
-    </section>
-
     <section class="panel" id="help">
       <div class="card stack">
         <h2>Hvordan bestille partnerreiser som SAS EuroBonus-medlem</h2>
@@ -141,11 +130,11 @@
         </div>
         <div class="notice">
           <strong>Om dyplenker:</strong>
-          <span class="muted">SAS-linker kan i praksis settes med rute og måned. Eksakt flight/cabin-valg må ofte gjøres i SAS sitt eget søkeresultat.</span>
+          <span class="muted">SAS-linker åpner bookingkontekst basert på valgt rute og dato. Eksakt flightvalg gjøres i SAS sin egen flyt.</span>
         </div>
       </div>
     </section>
   </div>
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v={{ asset_version }}"></script>
 </body>
 </html>

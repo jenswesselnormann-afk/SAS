@@ -3,8 +3,8 @@
     <span>Kilde</span>
   <select name="provider_select">
     <option value="SAS">SAS</option>
-    <option value="SkyTeam">SkyTeam</option>
-    <option value="Both">SAS + SkyTeam</option>
+    <option value="SkyTeam">SkyTeam (ikke verifisert)</option>
+    <option value="Both">SAS + SkyTeam (SkyTeam deaktivert)</option>
   </select>
   </label>
   <input type="hidden" name="provider" value="SAS">
@@ -12,8 +12,7 @@
     <span>Modus</span>
   <select name="mode">
     <option value="route_search">Kalendersøk</option>
-    <option value="any_routes">Any routes</option>
-    <option value="best_value">Best value</option>
+    <option value="any_routes">Alle destinasjoner</option>
     <option value="most_hits">Flest hits</option>
   </select>
   </label>
@@ -32,7 +31,6 @@
     <option>Economy</option>
     <option>Premium</option>
     <option>Business</option>
-    <option>First</option>
   </select>
   <input type="number" name="passengers" min="1" max="9" value="1">
   <label class="toggle"><input type="checkbox" name="direct_only"> Kun direkte</label>
@@ -40,4 +38,4 @@
   <button type="submit">Finn tilgjengelige bonusseter</button>
   <a class="ghost-btn export-link" href="/export.csv">Eksporter CSV</a>
 </form>
-<p class="meta-line search-note">Lenker i treffkort åpner SAS sine offisielle sider med rutekontekst. Eksakt flight/itinerary må ofte velges i SAS-flowen.</p>
+<p class="meta-line search-note">SAS-resultater hentes live fra SAS Award Finder beta-endepunkt. SkyTeam vises ikke som verifisert data i denne versjonen.</p>
